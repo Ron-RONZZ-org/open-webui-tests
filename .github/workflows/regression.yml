@@ -10,6 +10,21 @@ on:
         required: false
         type: string
         default: main
+      open-webui-repository:
+        description: Repository of the Open WebUI source to test (fork-aware)
+        required: false
+        type: string
+        default: open-webui/open-webui
+      tests-repository:
+        description: Repository holding the test suite
+        required: false
+        type: string
+        default: open-webui/tests
+      fast:
+        description: Run only the requested suite job; skip the heavy jobs (sharded integration, postgres/redis, e2e, frontend)
+        required: false
+        type: boolean
+        default: false
       open-webui-ref:
         description: Ref of open-webui/open-webui to test (tag, branch or SHA)
         required: true
@@ -31,6 +46,21 @@ on:
         required: false
         type: string
         default: main
+      open-webui-repository:
+        description: Repository of the Open WebUI source to test (fork-aware)
+        required: false
+        type: string
+        default: open-webui/open-webui
+      tests-repository:
+        description: Repository holding the test suite
+        required: false
+        type: string
+        default: open-webui/tests
+      fast:
+        description: Run only the requested suite job; skip the heavy jobs (sharded integration, postgres/redis, e2e, frontend)
+        required: false
+        type: boolean
+        default: false
       open-webui-ref:
         description: Ref of open-webui/open-webui to test (tag, branch or SHA)
         required: true
@@ -60,14 +90,14 @@ jobs:
       - name: Check out the test suite
         uses: actions/checkout@v5
         with:
-          repository: open-webui/tests
+          repository: ${{ inputs.tests-repository }}
           ref: ${{ inputs.tests-ref }}
           path: tests
 
       - name: Check out Open WebUI
         uses: actions/checkout@v5
         with:
-          repository: open-webui/open-webui
+          repository: ${{ inputs.open-webui-repository }}
           ref: ${{ inputs.open-webui-ref }}
           path: open-webui
 
@@ -115,6 +145,7 @@ jobs:
   # The suite boots its own instances from the checkout. Split into shards balanced on
   # the timings in .test_durations; a release is gated on all of them.
   integration:
+    if: ${{ !inputs.fast }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -124,14 +155,14 @@ jobs:
       - name: Check out the test suite
         uses: actions/checkout@v5
         with:
-          repository: open-webui/tests
+          repository: ${{ inputs.tests-repository }}
           ref: ${{ inputs.tests-ref }}
           path: tests
 
       - name: Check out Open WebUI
         uses: actions/checkout@v5
         with:
-          repository: open-webui/open-webui
+          repository: ${{ inputs.open-webui-repository }}
           ref: ${{ inputs.open-webui-ref }}
           path: open-webui
 
@@ -212,6 +243,7 @@ jobs:
   # The integration suite again with every instance on Postgres and Redis. Reports without
   # gating a release until that mode has settled.
   integration-postgres-redis:
+    if: ${{ !inputs.fast }}
     runs-on: ubuntu-latest
     continue-on-error: true
     strategy:
@@ -222,14 +254,14 @@ jobs:
       - name: Check out the test suite
         uses: actions/checkout@v5
         with:
-          repository: open-webui/tests
+          repository: ${{ inputs.tests-repository }}
           ref: ${{ inputs.tests-ref }}
           path: tests
 
       - name: Check out Open WebUI
         uses: actions/checkout@v5
         with:
-          repository: open-webui/open-webui
+          repository: ${{ inputs.open-webui-repository }}
           ref: ${{ inputs.open-webui-ref }}
           path: open-webui
 
@@ -315,13 +347,13 @@ jobs:
   # so committing it keeps the split balanced as tests are added and the runners change.
   durations:
     needs: [integration, e2e]
-    if: always()
+    if: ${{ always() && !inputs.fast }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out the test suite
         uses: actions/checkout@v5
         with:
-          repository: open-webui/tests
+          repository: ${{ inputs.tests-repository }}
           ref: ${{ inputs.tests-ref }}
 
       - uses: actions/setup-python@v5
@@ -346,6 +378,7 @@ jobs:
 
   # Built once for the browser shards, which restore it from the cache.
   e2e-build:
+    if: ${{ !inputs.fast }}
     runs-on: ubuntu-latest
     continue-on-error: true
     outputs:
@@ -355,7 +388,7 @@ jobs:
         id: open-webui
         uses: actions/checkout@v5
         with:
-          repository: open-webui/open-webui
+          repository: ${{ inputs.open-webui-repository }}
           ref: ${{ inputs.open-webui-ref }}
           path: open-webui
 
@@ -397,6 +430,7 @@ jobs:
   # Reports without gating a release until the browser suite has settled.
   e2e:
     needs: e2e-build
+    if: ${{ !inputs.fast }}
     runs-on: ubuntu-latest
     continue-on-error: true
     strategy:
@@ -407,14 +441,14 @@ jobs:
       - name: Check out the test suite
         uses: actions/checkout@v5
         with:
-          repository: open-webui/tests
+          repository: ${{ inputs.tests-repository }}
           ref: ${{ inputs.tests-ref }}
           path: tests
 
       - name: Check out Open WebUI
         uses: actions/checkout@v5
         with:
-          repository: open-webui/open-webui
+          repository: ${{ inputs.open-webui-repository }}
           ref: ${{ inputs.open-webui-ref }}
           path: open-webui
 
@@ -498,19 +532,20 @@ jobs:
 
   # The vitest suite drives the frontend source, so it needs the checkout's node_modules.
   frontend:
+    if: ${{ !inputs.fast }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out the test suite
         uses: actions/checkout@v5
         with:
-          repository: open-webui/tests
+          repository: ${{ inputs.tests-repository }}
           ref: ${{ inputs.tests-ref }}
           path: tests
 
       - name: Check out Open WebUI
         uses: actions/checkout@v5
         with:
-          repository: open-webui/open-webui
+          repository: ${{ inputs.open-webui-repository }}
           ref: ${{ inputs.open-webui-ref }}
           path: open-webui
 
