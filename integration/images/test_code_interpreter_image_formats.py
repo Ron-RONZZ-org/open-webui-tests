@@ -8,7 +8,8 @@ matched `\\w+`, which excludes the `+` in `svg+xml`.
 
 The code interpreter runs on its Jupyter engine, served by `harness.code_interpreter`, whose
 kernel runs each cell in a fresh Python process; the tests read what the cell printed from the
-stored reply.
+stored reply. The cell builds the data URI from the image bytes at run time, so the stored
+message (which echoes the cell's source) can be checked for a leftover raw data URI.
 
 Discriminates: passes with the widened prefix; with `BASE64_IMAGE_URL_PREFIX` back to `\\w+` the
 SVG cases fail while the PNG cases still pass.
@@ -37,15 +38,34 @@ CODE_EXECUTION_CONFIG = '/api/v1/configs/code_execution'
 TAG_FORMAT = '<code_interpreter type="code" lang="python">'
 PATHS = ['tag', 'tool']
 
-# A 1x1 PNG and an empty SVG, exactly as a cell would print them.
-PNG = (
-    'data:image/png;base64,'
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ'
-    'AAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
-)
-SVG = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjwvc3ZnPg=='
+# A 1x1 PNG and an empty SVG: the bytes as hex (fed to the cell) and the data URI a failed
+# upload would leave behind (asserted absent).
+CASES = [
+    pytest.param(
+        'image/png',
+        '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489'
+        '0000000d4944415478da63fccfc0500f000485018084a98c210000000049454e44ae426082',
+        'data:image/png;base64,'
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+        id='png',
+    ),
+    pytest.param(
+        'image/svg+xml',
+        '3c73766720786d6c6e733d22687474703a2f2f7777772e77332e6f72672f323030302f737667223e3c2f7376673e',
+        'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjwvc3ZnPg==',
+        id='svg',
+    ),
+]
 
 FILE_URL = re.compile(r'/api/v1/files/[^/]+/content')
+
+
+def _print_data_uri(mime: str, hex_bytes: str) -> str:
+    """A cell that prints a data URI built from `hex_bytes` (so its source holds no base64)."""
+    return (
+        'import base64\n'
+        f"print('data:{mime};base64,' + base64.b64encode(bytes.fromhex('{hex_bytes}')).decode())"
+    )
 
 
 @pytest.fixture(scope='module')
@@ -95,10 +115,10 @@ def _run(launched, path: str, code: str) -> str:
 
 
 @pytest.mark.parametrize('path', PATHS)
-@pytest.mark.parametrize('data_uri', [PNG, SVG], ids=['png', 'svg'])
-def test_a_base64_image_output_is_uploaded_and_served(path, data_uri, interpreter):
-    stored = _run(interpreter, path, f'print({data_uri!r})')
-    subtype = data_uri.split(';')[0].split('/')[-1]
+@pytest.mark.parametrize('mime, hex_bytes, data_uri', CASES)
+def test_a_base64_image_output_is_uploaded_and_served(path, mime, hex_bytes, data_uri, interpreter):
+    stored = _run(interpreter, path, _print_data_uri(mime, hex_bytes))
+    subtype = mime.split('/')[-1]
     assert FILE_URL.search(stored), (
         f'the {subtype} image a cell printed on the {path} path was not uploaded and served '
         f'from the files API: {stored[-1500:]}'
