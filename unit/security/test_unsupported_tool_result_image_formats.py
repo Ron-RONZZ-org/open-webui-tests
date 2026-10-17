@@ -165,7 +165,7 @@ async def test_mcp_raster_result_does_not_inline_source(middleware, stored_tool_
 
 @pytest.mark.asyncio
 async def test_large_svg_source_is_truncated(middleware, stored_tool_image):
-    svg = '<svg>' + ('x' * (middleware.MAX_INLINE_SVG_SOURCE_CHARS + 5000)) + '</svg>'
+    svg = '<svg>' + ('x' * (middleware.DEFAULT_INLINE_SVG_SOURCE_CHARS + 5000)) + '</svg>'
 
     text, _, _ = await middleware.process_tool_result(
         request=None,
@@ -179,7 +179,7 @@ async def test_large_svg_source_is_truncated(middleware, stored_tool_image):
 
     assert 'truncated:' in text
     assert 'characters omitted' in text
-    assert text.count('x') <= middleware.MAX_INLINE_SVG_SOURCE_CHARS
+    assert text.count('x') <= middleware.DEFAULT_INLINE_SVG_SOURCE_CHARS
 
 
 @pytest.mark.asyncio
@@ -199,3 +199,53 @@ async def test_svg_data_uri_result_reaches_the_model_as_source(middleware):
 
     assert '<text>π</text>' in text
     assert files == [{'type': 'image', 'url': data_uri}]
+
+
+@pytest.mark.parametrize(
+    ('context_window', 'used_tokens', 'expected'),
+    [
+        # 30% of free context when usage is known.
+        (32_000, 8_000, 21_600),
+        # 15% of the whole window when usage is unknown.
+        (32_000, None, 14_400),
+        # Ceiling clamps a 1M-token window.
+        (1_000_000, 0, 200_000),
+        # Floor clamps a nearly full context.
+        (20_000, 19_000, 10_000),
+        # No context window information.
+        (None, 1_000, 20_000),
+    ],
+)
+def test_inline_svg_budget_follows_the_context_window(middleware, context_window, used_tokens, expected):
+    models = {'base': {'context_window': context_window}} if context_window else {}
+    model = {'info': {'base_model_id': 'base'}} if context_window else {}
+    usage = {'prompt_tokens': used_tokens} if used_tokens is not None else None
+
+    assert middleware.resolve_inline_svg_char_budget(models, model, usage) == expected
+
+
+def test_inline_svg_budget_reads_the_model_own_window(middleware):
+    models = {'direct': {'context_window': 64_000}}
+    model = models['direct']
+
+    assert middleware.resolve_inline_svg_char_budget(models, model, {'prompt_tokens': 16_000}) == 43_200
+
+
+@pytest.mark.asyncio
+async def test_svg_budget_is_shared_across_images_in_one_result(middleware, stored_tool_image):
+    """Two SVGs in one result split the per-result budget instead of each claiming it."""
+    svg = '<svg>' + ('x' * 15_000) + '</svg>'
+    item = {'type': 'image', 'mimeType': 'image/svg+xml', 'data': _svg_base64(svg)}
+
+    text, _, _ = await middleware.process_tool_result(
+        request=None,
+        tool_function_name='get-file-data',
+        tool_result=[item, dict(item)],
+        tool_type='mcp',
+        direct_tool=False,
+        metadata={},
+        user=None,
+        inline_svg_char_budget=20_000,
+    )
+
+    assert text.count('x') <= 20_000
